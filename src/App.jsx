@@ -6,128 +6,124 @@ import {
   MessageSquare, Phone, Video, Send, ArrowLeft, 
   Crown, Lock, Download, ExternalLink, X, Image, Link, CheckCircle, 
   ShieldCheck, Trash2, Users, DollarSign, Activity, Ban, Mic, LogIn, Check,
-  Mail, ArrowRight
+  Mail, ArrowRight, KeyRound
 } from 'lucide-react';
 
 // Firebase imports
-import { auth, db } from './firebase'; 
-import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
+import { db } from './firebase'; 
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, arrayUnion, arrayRemove, increment, setDoc, where, getDocs } from 'firebase/firestore';
 
-// --- MOCK DB ---
+// --- MOCK DB (Only for trending books and chat list now) ---
 const DB = {
-  currentUser: {
-    id: 'u_1', name: 'রাফসান আহমেদ', role: 'admin', isAuthor: true, isPremium: false, 
-    followers: '1.2k', following: '120',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=150&h=150',
-  },
   trendingBooks: [
     { id: 'tb1', title: 'নূরজাহান', author: 'ইমদাদুল হক মিলন', cover: 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=100' },
     { id: 'tb2', title: 'দেয়াল', author: 'হুমায়ূন আহমেদ', cover: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?auto=format&fit=crop&q=80&w=100' },
   ],
   chatList: [
-    { id: 'u_2', name: 'সাদিয়া ইসলাম', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150', lastMsg: 'নতুন লেখা কবে আসবে?' },
-    { id: 'u_3', name: 'তানভীর হাসান', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=150', lastMsg: 'ধন্যবাদ ভাইয়া।' },
+    { id: 'u_2', name: 'সাদিয়া ইসলাম', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150', lastMsg: 'নতুন লেখা কবে আসবে?' },
+    { id: 'u_3', name: 'তানভীর হাসান', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=150', lastMsg: 'ধন্যবাদ ভাইয়া।' },
   ]
 };
 
 // ==========================================
-// 1. PREMIUM AUTHENTICATION MODAL (English, OTP only on Signup)
+// 1. AUTHENTICATION MODAL WITH PASSWORD RECOVERY
 // ==========================================
 const AuthModal = ({ isOpen, onClose, onLoginSuccess }) => {
-  const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
-  const [step, setStep] = useState(1); // For signup steps
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'signup', 'forgot'
+  const [forgotStep, setForgotStep] = useState(1); // 1: Find Account, 2: Reset Password
+  const [resetUserId, setResetUserId] = useState(null);
   
-  const [formData, setFormData] = useState({ firstName: '', lastName: '', phone: '', password: '', otp: '' });
+  const [formData, setFormData] = useState({ 
+    firstName: '', 
+    lastName: '', 
+    email: '', 
+    phone: '', 
+    identifier: '', 
+    password: '',
+    newPassword: ''
+  });
+  
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [successMsg, setSuccessMsg] = useState('');
 
   if (!isOpen) return null;
 
-  const setupRecaptcha = () => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
-    }
-  };
-
+  // --- LOGIN FUNCTION ---
   const handleLogin = async (e) => {
     e.preventDefault();
-    setErrorMsg('');
-    if (!formData.phone || !formData.password) return setErrorMsg('Please enter both phone and password.');
+    setErrorMsg(''); setSuccessMsg('');
+    const iden = formData.identifier.trim();
+    const pass = formData.password.trim();
+
+    if (!iden || !pass) return setErrorMsg('দয়া করে ইমেইল/ফোন এবং পাসওয়ার্ড দিন।');
 
     setIsLoading(true);
     try {
-      const formattedPhone = `+880${formData.phone.replace(/^0+/, '')}`; 
       const usersRef = collection(db, "users");
-      const q = query(usersRef, where("phone", "==", formattedPhone), where("password", "==", formData.password));
+      let q;
+      
+      if (iden.includes('@')) {
+        q = query(usersRef, where("email", "==", iden), where("password", "==", pass));
+      } else {
+        const formattedPhone = iden.startsWith('+880') ? iden : `+880${iden.replace(/^0+/, '')}`;
+        q = query(usersRef, where("phone", "==", formattedPhone), where("password", "==", pass));
+      }
+      
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
-        setErrorMsg('Invalid phone number or password!');
+        setErrorMsg('ইমেইল/ফোন অথবা পাসওয়ার্ড ভুল হয়েছে!');
       } else {
         const userData = querySnapshot.docs[0].data();
         onLoginSuccess(userData);
         onClose();
       }
     } catch (error) {
-      setErrorMsg('Something went wrong. Please try again.');
+      setErrorMsg('কোথাও কোনো সমস্যা হয়েছে, আবার চেষ্টা করুন।');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSignupNext = async (e) => {
+  // --- SIGNUP FUNCTION ---
+  const handleSignup = async (e) => {
     e.preventDefault();
-    setErrorMsg('');
+    setErrorMsg(''); setSuccessMsg('');
 
-    if (step === 1) {
-      if (!formData.firstName || !formData.lastName || !formData.password) return setErrorMsg('Please fill in all fields.');
-      if (formData.password.length < 6) return setErrorMsg('Password must be at least 6 characters.');
-      setStep(2);
-    } 
-    else if (step === 2) {
-      if (!formData.phone || formData.phone.length < 10) return setErrorMsg('Please enter a valid phone number.');
-      
-      setIsLoading(true);
-      try {
-        setupRecaptcha();
-        const formattedPhone = `+880${formData.phone.replace(/^0+/, '')}`;
-        const q = query(collection(db, "users"), where("phone", "==", formattedPhone));
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          setIsLoading(false);
-          return setErrorMsg('This phone number is already registered!');
-        }
-
-        const confirmation = await signInWithPhoneNumber(auth, formattedPhone, window.recaptchaVerifier);
-        setConfirmationResult(confirmation);
-        setStep(3); 
-      } catch (error) {
-        console.error(error);
-        setErrorMsg('Failed to send OTP. Please check the number.');
-      } finally {
-        setIsLoading(false);
-      }
+    if (!formData.firstName || !formData.lastName || !formData.email || !formData.phone || !formData.password) {
+      return setErrorMsg('দয়া করে সব তথ্য পূরণ করুন।');
     }
-  };
-
-  const handleVerifyOTP = async (e) => {
-    e.preventDefault();
-    setErrorMsg('');
-    if (formData.otp.length < 6) return setErrorMsg('Please enter the 6-digit OTP.');
-
+    if (formData.password.length < 6) {
+      return setErrorMsg('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+    }
+      
     setIsLoading(true);
     try {
-      const result = await confirmationResult.confirm(formData.otp);
-      const user = result.user;
+      const mail = formData.email.trim();
+      const formattedPhone = `+880${formData.phone.trim().replace(/^0+/, '')}`;
+      
+      const phoneQuery = query(collection(db, "users"), where("phone", "==", formattedPhone));
+      const emailQuery = query(collection(db, "users"), where("email", "==", mail));
+      
+      const [phoneSnap, emailSnap] = await Promise.all([getDocs(phoneQuery), getDocs(emailQuery)]);
+      
+      if (!phoneSnap.empty) {
+        setIsLoading(false);
+        return setErrorMsg('এই ফোন নাম্বারটি আগে থেকেই রেজিস্টার করা আছে!');
+      }
+      if (!emailSnap.empty) {
+        setIsLoading(false);
+        return setErrorMsg('এই ইমেইলটি আগে থেকেই রেজিস্টার করা আছে!');
+      }
 
+      const newUserId = `usr_${Date.now()}`;
       const userData = {
-        id: user.uid,
-        name: `${formData.firstName} ${formData.lastName}`,
-        phone: user.phoneNumber,
-        password: formData.password, 
+        id: newUserId,
+        name: `${formData.firstName.trim()} ${formData.lastName.trim()}`,
+        email: mail,
+        phone: formattedPhone,
+        password: formData.password.trim(), 
         role: 'user',
         isAuthor: false,
         isPremium: false,
@@ -135,23 +131,89 @@ const AuthModal = ({ isOpen, onClose, onLoginSuccess }) => {
         createdAt: serverTimestamp()
       };
 
-      await setDoc(doc(db, "users", user.uid), userData);
+      await setDoc(doc(db, "users", newUserId), userData);
       onLoginSuccess(userData);
       onClose();
     } catch (error) {
-      setErrorMsg('Invalid OTP. Please try again.');
+      setErrorMsg('রেজিস্ট্রেশন করা যায়নি। আবার চেষ্টা করুন।');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const resetForm = () => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setStep(1); setErrorMsg(''); };
+  // --- FORGOT PASSWORD FUNCTION (STEP 1: Find Account) ---
+  const handleFindAccount = async (e) => {
+    e.preventDefault();
+    setErrorMsg(''); setSuccessMsg('');
+    const iden = formData.identifier.trim();
+    if (!iden) return setErrorMsg('দয়া করে আপনার ইমেইল বা ফোন নাম্বার দিন।');
+
+    setIsLoading(true);
+    try {
+      const usersRef = collection(db, "users");
+      let q;
+      if (iden.includes('@')) {
+        q = query(usersRef, where("email", "==", iden));
+      } else {
+        const formattedPhone = iden.startsWith('+880') ? iden : `+880${iden.replace(/^0+/, '')}`;
+        q = query(usersRef, where("phone", "==", formattedPhone));
+      }
+      
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        setErrorMsg('এই ইমেইল বা ফোন নাম্বারের কোনো অ্যাকাউন্ট পাওয়া যায়নি!');
+      } else {
+        // Account found! Move to Step 2
+        setResetUserId(querySnapshot.docs[0].id);
+        setForgotStep(2);
+      }
+    } catch (error) {
+      setErrorMsg('কোথাও কোনো সমস্যা হয়েছে, আবার চেষ্টা করুন।');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- FORGOT PASSWORD FUNCTION (STEP 2: Reset Password) ---
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setErrorMsg(''); setSuccessMsg('');
+    const newPass = formData.newPassword.trim();
+
+    if (newPass.length < 6) return setErrorMsg('নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+
+    setIsLoading(true);
+    try {
+      const userRef = doc(db, "users", resetUserId);
+      await updateDoc(userRef, { password: newPass });
+      
+      setSuccessMsg('পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে! এখন লগইন করুন।');
+      setTimeout(() => {
+        setAuthMode('login');
+        setForgotStep(1);
+        setFormData({...formData, password: '', newPassword: ''});
+        setSuccessMsg('');
+      }, 2000);
+      
+    } catch (error) {
+      setErrorMsg('পাসওয়ার্ড পরিবর্তন করা যায়নি। আবার চেষ্টা করুন।');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const switchMode = (mode) => { 
+    setAuthMode(mode); 
+    setErrorMsg(''); 
+    setSuccessMsg('');
+    setForgotStep(1);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
       <div className="bg-white dark:bg-[#1C1C1E] w-full max-w-4xl rounded-2xl shadow-2xl flex overflow-hidden relative">
         <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-black/10 dark:bg-white/10 rounded-full text-gray-500 dark:text-gray-300 hover:bg-black/20 z-50 transition-colors"><X className="w-5 h-5" /></button>
-        <div id="recaptcha-container"></div>
 
         <div className="hidden md:block md:w-1/2 relative bg-[#1c1917]">
           <img src="https://images.unsplash.com/photo-1507842217343-583bb7270b66?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80" alt="Library" className="absolute inset-0 w-full h-full object-cover opacity-60" />
@@ -161,75 +223,139 @@ const AuthModal = ({ isOpen, onClose, onLoginSuccess }) => {
           </div>
         </div>
 
-        <div className="w-full md:w-1/2 p-8 md:p-12 flex flex-col justify-center bg-white dark:bg-[#1C1C1E]">
+        <div className="w-full md:w-1/2 p-8 md:p-12 flex flex-col justify-center bg-white dark:bg-[#1C1C1E] max-h-[90vh] overflow-y-auto">
           <div className="mb-8">
-            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{authMode === 'login' ? 'Welcome Back' : 'Create an Account'}</h3>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">{authMode === 'login' ? 'Please enter your details to sign in.' : 'Join our community of readers and writers.'}</p>
+            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+              {authMode === 'login' ? 'Welcome Back' : authMode === 'signup' ? 'Create an Account' : 'Recover Password'}
+            </h3>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">
+              {authMode === 'login' ? 'Please enter your details to sign in.' : authMode === 'signup' ? 'Join our community of readers and writers.' : 'Enter your registered details to recover account.'}
+            </p>
           </div>
 
           {errorMsg && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-3 mb-6 rounded text-sm font-medium animate-in slide-in-from-top-2">{errorMsg}</div>}
+          {successMsg && <div className="bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 p-3 mb-6 rounded text-sm font-medium animate-in slide-in-from-top-2">{successMsg}</div>}
 
+          {/* LOGIN FORM */}
           {authMode === 'login' && (
-            <form onSubmit={handleLogin} className="space-y-5 animate-in fade-in">
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Phone Number</label>
-                <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] focus-within:ring-1 focus-within:ring-[#C2410C] transition-all">
-                  <span className="px-4 py-3.5 bg-gray-100 dark:bg-[#3A3A3C] text-gray-500 font-medium border-r border-gray-200 dark:border-gray-700 flex items-center gap-2"><Phone className="w-4 h-4" /> +880</span>
-                  <input type="tel" required placeholder="1XXXXXXXXX" value={formData.phone} onChange={e=>setFormData({...formData, phone: e.target.value.replace(/\D/g, '')})} className="w-full bg-transparent px-4 py-3 outline-none dark:text-white" />
+            <div className="animate-in fade-in space-y-5">
+              <form onSubmit={handleLogin} className="space-y-5">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Email or Phone Number</label>
+                  <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] focus-within:ring-1 focus-within:ring-[#C2410C] transition-all">
+                    <span className="px-4 py-3.5 text-gray-400 flex items-center"><User className="w-4 h-4" /></span>
+                    <input type="text" required placeholder="user@mail.com or 01XXXXXXXXX" value={formData.identifier} onChange={e=>setFormData({...formData, identifier: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Password</label>
-                <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] focus-within:ring-1 focus-within:ring-[#C2410C] transition-all">
-                  <span className="px-4 py-3.5 text-gray-400 flex items-center"><Lock className="w-4 h-4" /></span>
-                  <input type="password" required placeholder="••••••••" value={formData.password} onChange={e=>setFormData({...formData, password: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Password</label>
+                  <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] focus-within:ring-1 focus-within:ring-[#C2410C] transition-all">
+                    <span className="px-4 py-3.5 text-gray-400 flex items-center"><Lock className="w-4 h-4" /></span>
+                    <input type="password" required placeholder="••••••••" value={formData.password} onChange={e=>setFormData({...formData, password: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                  </div>
                 </div>
-              </div>
-              <div className="flex justify-end"><span className="text-xs font-semibold text-[#C2410C] cursor-pointer hover:underline">Forgot password?</span></div>
-              <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#1C1917] dark:bg-white text-white dark:text-black rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#C2410C] transition-colors shadow-lg disabled:opacity-70 mt-2">
-                {isLoading ? 'Signing in...' : 'Sign In'} <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
+                <div className="flex justify-end"><span onClick={() => switchMode('forgot')} className="text-xs font-semibold text-[#C2410C] cursor-pointer hover:underline">Forgot password?</span></div>
+                <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#1C1917] dark:bg-white text-white dark:text-black rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#C2410C] transition-colors shadow-lg disabled:opacity-70 mt-2">
+                  {isLoading ? 'Signing in...' : 'Sign In'} <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
           )}
 
+          {/* REGISTRATION FORM */}
           {authMode === 'signup' && (
-            <form onSubmit={step === 3 ? handleVerifyOTP : handleSignupNext} className="space-y-5 animate-in fade-in">
-              <div className="flex gap-2 mb-4">{[1, 2, 3].map(i => <div key={i} className={`h-1.5 flex-1 rounded-full ${step >= i ? 'bg-[#C2410C]' : 'bg-gray-200 dark:bg-gray-700'}`}></div>)}</div>
-              {step === 1 && (
-                <div className="space-y-4 animate-in slide-in-from-right-4">
-                  <div className="flex gap-4">
-                    <div className="flex-1"><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">First Name</label><input type="text" placeholder="John" value={formData.firstName} onChange={e=>setFormData({...formData, firstName: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3.5 outline-none focus:border-[#C2410C] dark:text-white transition-colors" /></div>
-                    <div className="flex-1"><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Last Name</label><input type="text" placeholder="Doe" value={formData.lastName} onChange={e=>setFormData({...formData, lastName: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3.5 outline-none focus:border-[#C2410C] dark:text-white transition-colors" /></div>
+            <div className="animate-in fade-in space-y-5">
+              <form onSubmit={handleSignup} className="space-y-4">
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">First Name</label>
+                    <input type="text" placeholder="John" value={formData.firstName} onChange={e=>setFormData({...formData, firstName: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3.5 outline-none focus:border-[#C2410C] dark:text-white transition-colors" />
                   </div>
-                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Create Password</label><div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all"><span className="px-4 py-3.5 text-gray-400 flex items-center"><Lock className="w-4 h-4" /></span><input type="password" placeholder="At least 6 characters" value={formData.password} onChange={e=>setFormData({...formData, password: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" /></div></div>
-                  <button type="submit" className="w-full py-4 bg-[#1C1917] dark:bg-white text-white dark:text-black rounded-xl font-bold mt-4 hover:opacity-90">Continue</button>
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Last Name</label>
+                    <input type="text" placeholder="Doe" value={formData.lastName} onChange={e=>setFormData({...formData, lastName: e.target.value})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3.5 outline-none focus:border-[#C2410C] dark:text-white transition-colors" />
+                  </div>
                 </div>
-              )}
-              {step === 2 && (
-                <div className="space-y-5 animate-in slide-in-from-right-4">
-                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Phone Number</label><p className="text-xs text-gray-400 mb-3 block">We'll send a 6-digit OTP to verify your number.</p><div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all"><span className="px-4 py-3.5 bg-gray-100 dark:bg-[#3A3A3C] text-gray-500 font-medium border-r border-gray-200 dark:border-gray-700 flex items-center gap-2"><Phone className="w-4 h-4" /> +880</span><input type="tel" placeholder="1XXXXXXXXX" value={formData.phone} onChange={e=>setFormData({...formData, phone: e.target.value.replace(/\D/g, '')})} className="w-full bg-transparent px-4 py-3 outline-none dark:text-white" /></div></div>
-                  <div className="flex gap-3"><button type="button" onClick={() => setStep(1)} className="py-4 px-6 bg-gray-100 dark:bg-[#3A3A3C] text-gray-600 dark:text-gray-300 rounded-xl font-bold">Back</button><button type="submit" disabled={isLoading} className="flex-1 py-4 bg-[#C2410C] text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#9A3412] disabled:opacity-70 shadow-md">{isLoading ? 'Sending OTP...' : 'Send Verification Code'}</button></div>
+
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Email</label>
+                  <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all">
+                    <span className="px-4 py-3.5 text-gray-400 flex items-center"><Mail className="w-4 h-4" /></span>
+                    <input type="email" placeholder="example@mail.com" value={formData.email} onChange={e=>setFormData({...formData, email: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                  </div>
                 </div>
-              )}
-              {step === 3 && (
-                <div className="space-y-5 animate-in slide-in-from-right-4">
-                  <div className="text-center mb-6"><div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4"><ShieldCheck className="w-8 h-8" /></div><p className="text-sm text-gray-600 dark:text-gray-300">Enter the 6-digit code sent to <br/><span className="font-bold text-black dark:text-white">+880 {formData.phone}</span></p></div>
-                  <div><input type="number" placeholder="• • • • • •" value={formData.otp} onChange={e=>setFormData({...formData, otp: e.target.value.substring(0, 6)})} className="w-full bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-4 outline-none text-center text-2xl tracking-[0.75em] focus:border-emerald-500 font-bold dark:text-white transition-colors" /></div>
-                  <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-600 shadow-md disabled:opacity-70 mt-2">{isLoading ? 'Verifying...' : 'Complete Registration'} <CheckCircle className="w-5 h-5" /></button>
+
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Phone Number</label>
+                  <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all">
+                    <span className="px-4 py-3.5 bg-gray-100 dark:bg-[#3A3A3C] text-gray-500 font-medium border-r border-gray-200 dark:border-gray-700 flex items-center gap-2"><Phone className="w-4 h-4" /> +880</span>
+                    <input type="tel" placeholder="1XXXXXXXXX" value={formData.phone} onChange={e=>setFormData({...formData, phone: e.target.value.replace(/\D/g, '')})} className="w-full bg-transparent px-4 py-3 outline-none dark:text-white" />
+                  </div>
                 </div>
+
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Create Password</label>
+                  <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all">
+                    <span className="px-4 py-3.5 text-gray-400 flex items-center"><Lock className="w-4 h-4" /></span>
+                    <input type="password" placeholder="At least 6 characters" value={formData.password} onChange={e=>setFormData({...formData, password: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                  </div>
+                </div>
+                
+                <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#C2410C] text-white rounded-xl font-bold mt-2 hover:bg-[#9A3412] disabled:opacity-70 shadow-md">
+                  {isLoading ? 'Registering...' : 'Sign Up'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* FORGOT PASSWORD FORM */}
+          {authMode === 'forgot' && (
+            <div className="animate-in fade-in space-y-5">
+              {forgotStep === 1 ? (
+                <form onSubmit={handleFindAccount} className="space-y-5">
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">পাসওয়ার্ড পরিবর্তন করতে আপনার রেজিস্ট্রেশন করা ইমেইল অথবা ফোন নাম্বারটি দিন।</p>
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Email or Phone</label>
+                    <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all">
+                      <span className="px-4 py-3.5 text-gray-400 flex items-center"><User className="w-4 h-4" /></span>
+                      <input type="text" required placeholder="user@mail.com or 01XXXXXXXXX" value={formData.identifier} onChange={e=>setFormData({...formData, identifier: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                    </div>
+                  </div>
+                  <button type="submit" disabled={isLoading} className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold mt-2 hover:bg-emerald-600 shadow-md disabled:opacity-70">
+                    {isLoading ? 'Searching...' : 'Find Account'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleResetPassword} className="space-y-5 animate-in slide-in-from-right-4">
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium mb-4">অ্যাকাউন্ট পাওয়া গেছে! আপনার নতুন পাসওয়ার্ড দিন।</p>
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">New Password</label>
+                    <div className="flex bg-gray-50 dark:bg-[#2C2C2E] border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#C2410C] transition-all">
+                      <span className="px-4 py-3.5 text-gray-400 flex items-center"><KeyRound className="w-4 h-4" /></span>
+                      <input type="password" required placeholder="At least 6 characters" value={formData.newPassword} onChange={e=>setFormData({...formData, newPassword: e.target.value})} className="w-full bg-transparent px-2 py-3 outline-none dark:text-white" />
+                    </div>
+                  </div>
+                  <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#C2410C] text-white rounded-xl font-bold mt-2 hover:bg-[#9A3412] shadow-md disabled:opacity-70">
+                    {isLoading ? 'Updating...' : 'Set New Password'}
+                  </button>
+                </form>
               )}
-            </form>
+            </div>
           )}
 
           <div className="mt-8 pt-6 border-t border-gray-100 dark:border-gray-800 text-center">
-            <p className="text-sm text-gray-500 dark:text-gray-400">{authMode === 'login' ? "Don't have an account? " : "Already have an account? "} <button type="button" onClick={resetForm} className="font-bold text-[#C2410C] hover:underline hover:text-[#9A3412] transition-colors">{authMode === 'login' ? 'Create an account' : 'Sign in instead'}</button></p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {authMode === 'login' ? "Don't have an account? " : authMode === 'signup' ? "Already have an account? " : "Remembered your password? "} 
+              <button type="button" onClick={() => switchMode(authMode === 'login' ? 'signup' : 'login')} className="font-bold text-[#C2410C] hover:underline hover:text-[#9A3412] transition-colors">
+                {authMode === 'login' ? 'Create an account' : 'Sign in instead'}
+              </button>
+            </p>
           </div>
         </div>
       </div>
     </div>
   );
 };
-
 
 // ==========================================
 // 2. SUBSCRIPTION MODAL
@@ -243,7 +369,7 @@ const SubscriptionModal = ({ isOpen, onClose, onSubscribe }) => {
       <div className="bg-white dark:bg-[#242526] w-full max-w-md rounded-3xl shadow-2xl p-8 relative">
         <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-[#3A3B3C] rounded-full"><X className="w-5 h-5" /></button>
         <div className="flex justify-center mb-4"><Crown className="w-12 h-12 text-amber-500" /></div>
-        <h2 className="text-2xl font-bold text-center mb-2 dark:text-white">প্রিমিয়াম আনলক করুন</h2>
+        <h2 className="text-2xl font-bold text-center mb-2 dark:text-white">প্রিমিয়াম আনলক করুন</h2>
         <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 rounded-2xl p-4 mb-6"><div className="flex justify-between items-center"><span className="font-bold text-amber-800 dark:text-amber-500">মাসিক প্যাক</span><span className="font-bold text-2xl dark:text-white">৳৫০</span></div></div>
         <button onClick={handlePayment} disabled={isProcessing} className="w-full py-3.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-bold">{isProcessing ? 'প্রসেস হচ্ছে...' : 'পেমেন্ট করুন'}</button>
       </div>
@@ -254,24 +380,35 @@ const SubscriptionModal = ({ isOpen, onClose, onSubscribe }) => {
 // ==========================================
 // 3. CREATE POST MODAL
 // ==========================================
-const CreatePostModal = ({ isOpen, onClose }) => {
+const CreatePostModal = ({ isOpen, onClose, currentUser }) => {
   const [selectedCategory, setSelectedCategory] = useState('short');
   const [postTitle, setPostTitle] = useState('');
   const [postContent, setPostContent] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
 
-  if (!isOpen) return null;
+  if (!isOpen || !currentUser) return null;
 
   const handlePublish = async () => {
     if (!postContent.trim()) return alert('কিছু লিখুন!');
     setIsPublishing(true);
     try {
       await addDoc(collection(db, 'posts'), {
-        authorId: DB.currentUser.id, authorName: DB.currentUser.name, isAuthor: DB.currentUser.isAuthor, isPremium: false, avatar: DB.currentUser.avatar,
-        type: selectedCategory, title: postTitle, content: postContent, likes: 0, likedBy: [], comments: 0, commentsList: [], createdAt: serverTimestamp()
+        authorId: currentUser.id, 
+        authorName: currentUser.name, 
+        isAuthor: currentUser.isAuthor || false, 
+        isPremium: false, 
+        avatar: currentUser.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+        type: selectedCategory, 
+        title: postTitle, 
+        content: postContent, 
+        likes: 0, 
+        likedBy: [], 
+        comments: 0, 
+        commentsList: [], 
+        createdAt: serverTimestamp()
       });
       setPostTitle(''); setPostContent(''); onClose();
-    } catch (error) { alert("সমস্যা হয়েছে!"); } finally { setIsPublishing(false); }
+    } catch (error) { alert("সমস্যা হয়েছে!"); } finally { setIsPublishing(false); }
   };
 
   return (
@@ -293,37 +430,39 @@ const CreatePostModal = ({ isOpen, onClose }) => {
 // ==========================================
 // 4. POST CARD COMPONENT
 // ==========================================
-const PostCard = ({ post, isPremiumUser, onMessageAuthor, onSavePost, isSaved }) => {
+const PostCard = ({ post, isPremiumUser, onMessageAuthor, onSavePost, isSaved, currentUser }) => {
   const [expanded, setExpanded] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [showShareMenu, setShowShareMenu] = useState(false);
   
   const isLocked = post.isPremium && !isPremiumUser; 
-  const hasLiked = post.likedBy?.includes(DB.currentUser.id);
+  const hasLiked = currentUser ? post.likedBy?.includes(currentUser.id) : false;
   const commentsArray = post.commentsList || [];
 
   const handleLike = async () => {
+    if (!currentUser) return alert('লগইন করুন!');
     const postRef = doc(db, 'posts', post.id);
-    if (hasLiked) await updateDoc(postRef, { likedBy: arrayRemove(DB.currentUser.id), likes: increment(-1) });
-    else await updateDoc(postRef, { likedBy: arrayUnion(DB.currentUser.id), likes: increment(1) });
+    if (hasLiked) await updateDoc(postRef, { likedBy: arrayRemove(currentUser.id), likes: increment(-1) });
+    else await updateDoc(postRef, { likedBy: arrayUnion(currentUser.id), likes: increment(1) });
   };
 
   const handlePostComment = async () => {
+    if (!currentUser) return alert('লগইন করুন!');
     if (!commentText.trim()) return;
     const postRef = doc(db, 'posts', post.id);
-    await updateDoc(postRef, { commentsList: arrayUnion({ id: Date.now(), user: DB.currentUser.name, avatar: DB.currentUser.avatar, text: commentText }), comments: increment(1) });
+    await updateDoc(postRef, { commentsList: arrayUnion({ id: Date.now(), user: currentUser.name, avatar: currentUser.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png', text: commentText }), comments: increment(1) });
     setCommentText('');
   };
 
-  const handleCopyLink = () => { navigator.clipboard.writeText(window.location.href); alert('লিংক কপি হয়েছে!'); setShowShareMenu(false); };
+  const handleCopyLink = () => { navigator.clipboard.writeText(window.location.href); alert('লিংক কপি হয়েছে!'); setShowShareMenu(false); };
 
   return (
     <div className="bg-white dark:bg-[#242526] p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-[#333436] mb-4">
       <div className="flex justify-between mb-4">
         <div className="flex gap-3"><img src={post.avatar} className="w-10 h-10 rounded-full object-cover" alt="" /><div><h4 className="font-bold flex items-center gap-1 dark:text-white">{post.authorName} {post.isAuthor && <BadgeCheck className="w-4 h-4 text-blue-500" />}</h4><p className="text-[12px] text-gray-500">{post.type === 'short' ? 'কবিতা' : 'গল্প'}</p></div></div>
         <div className="flex gap-2 items-center">
-          {post.authorId !== DB.currentUser.id && onMessageAuthor && (
+          {(!currentUser || post.authorId !== currentUser.id) && onMessageAuthor && (
             <button onClick={() => onMessageAuthor({id: post.authorId || 'u_2', name: post.authorName, avatar: post.avatar})} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-500/10 text-blue-600 rounded-full text-[12px] font-bold"><MessageSquare className="w-3.5 h-3.5" /> মেসেজ</button>
           )}
           <MoreVertical className="w-5 h-5 text-gray-400 cursor-pointer" />
@@ -363,7 +502,9 @@ const PostCard = ({ post, isPremiumUser, onMessageAuthor, onSavePost, isSaved })
               <div key={c.id} className="flex gap-2.5"><img src={c.avatar} className="w-8 h-8 rounded-full" alt="" /><div className="bg-gray-50 dark:bg-[#3A3B3C] px-3.5 py-2.5 rounded-2xl rounded-tl-sm flex-1"><h5 className="font-bold text-[13px] dark:text-white">{c.user}</h5><p className="text-[13px] text-gray-700 dark:text-gray-300 mt-0.5">{c.text}</p></div></div>
             ))}
           </div>
-          <div className="flex items-center gap-2 mt-2"><img src={DB.currentUser.avatar} className="w-8 h-8 rounded-full" alt="" /><div className="flex-1 flex bg-gray-100 dark:bg-[#3A3B3C] rounded-full p-1 pl-4 items-center"><input type="text" placeholder="মন্তব্য লিখুন..." value={commentText} onChange={(e) => setCommentText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handlePostComment()} className="flex-1 bg-transparent outline-none text-[13px] dark:text-white" /><button onClick={handlePostComment} className="p-2 rounded-full bg-[#C2410C] text-white"><Send className="w-3.5 h-3.5" /></button></div></div>
+          {currentUser && (
+            <div className="flex items-center gap-2 mt-2"><img src={currentUser.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'} className="w-8 h-8 rounded-full" alt="" /><div className="flex-1 flex bg-gray-100 dark:bg-[#3A3B3C] rounded-full p-1 pl-4 items-center"><input type="text" placeholder="মন্তব্য লিখুন..." value={commentText} onChange={(e) => setCommentText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handlePostComment()} className="flex-1 bg-transparent outline-none text-[13px] dark:text-white" /><button onClick={handlePostComment} className="p-2 rounded-full bg-[#C2410C] text-white"><Send className="w-3.5 h-3.5" /></button></div></div>
+          )}
         </div>
       )}
     </div>
@@ -385,7 +526,7 @@ const AdminDashboard = ({ posts }) => {
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white/10 p-4 rounded-2xl"><Activity className="w-6 h-6 text-blue-400 mb-2"/><p className="text-gray-400 text-sm">মোট পোস্ট</p><h3 className="text-2xl font-bold">{posts.length}</h3></div>
           <div className="bg-white/10 p-4 rounded-2xl"><Users className="w-6 h-6 text-purple-400 mb-2"/><p className="text-gray-400 text-sm">মোট ইউজার</p><h3 className="text-2xl font-bold">৩,৪৫০</h3></div>
-          <div className="bg-white/10 p-4 rounded-2xl"><DollarSign className="w-6 h-6 text-emerald-400 mb-2"/><p className="text-gray-400 text-sm">আয়</p><h3 className="text-2xl font-bold">৳১২,৪০০</h3></div>
+          <div className="bg-white/10 p-4 rounded-2xl"><DollarSign className="w-6 h-6 text-emerald-400 mb-2"/><p className="text-gray-400 text-sm">আয়</p><h3 className="text-2xl font-bold">৳১২,৪০০</h3></div>
         </div>
       </div>
       <div className="flex border-b mb-6 bg-white dark:bg-[#242526] rounded-xl px-2 dark:border-[#333436]">
@@ -416,30 +557,31 @@ const AdminDashboard = ({ posts }) => {
 // ==========================================
 // 6. MESSAGE VIEW
 // ==========================================
-const MessageView = ({ predefinedChat, onClosePredefined }) => {
+const MessageView = ({ predefinedChat, onClosePredefined, currentUser }) => {
   const [activeChat, setActiveChat] = useState(predefinedChat || null);
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
-    if (!activeChat) return;
-    const chatRoomId = [DB.currentUser.id, activeChat.id].sort().join('_');
+    if (!activeChat || !currentUser) return;
+    const chatRoomId = [currentUser.id, activeChat.id].sort().join('_');
     const q = query(collection(db, "chats", chatRoomId, "messages"), orderBy("createdAt", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     });
     return () => unsubscribe();
-  }, [activeChat]);
+  }, [activeChat, currentUser]);
 
   const handleSendMessage = async (type = 'text', content = inputText) => {
+    if (!currentUser) return;
     if (type === 'text' && !content.trim()) return;
-    const chatRoomId = [DB.currentUser.id, activeChat.id].sort().join('_');
+    const chatRoomId = [currentUser.id, activeChat.id].sort().join('_');
     try {
-      await addDoc(collection(db, "chats", chatRoomId, "messages"), { senderId: DB.currentUser.id, text: content, type: type, createdAt: serverTimestamp() });
+      await addDoc(collection(db, "chats", chatRoomId, "messages"), { senderId: currentUser.id, text: content, type: type, createdAt: serverTimestamp() });
       setInputText('');
-    } catch (error) { alert("সমস্যা হয়েছে!"); }
+    } catch (error) { alert("সমস্যা হয়েছে!"); }
   };
 
   return (
@@ -461,12 +603,12 @@ const MessageView = ({ predefinedChat, onClosePredefined }) => {
             <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
               {messages.length === 0 && <div className="text-center text-gray-400 text-sm mt-10">মেসেজ পাঠান!</div>}
               {messages.map((msg) => {
-                const isMe = msg.senderId === DB.currentUser.id;
+                const isMe = currentUser && msg.senderId === currentUser.id;
                 return (
                   <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[75%] p-3 text-[14px] shadow-sm ${isMe ? 'bg-[#C2410C] text-white rounded-2xl rounded-tr-sm' : 'bg-white dark:bg-[#3A3B3C] dark:text-white rounded-2xl rounded-tl-sm'}`}>
                       {msg.type === 'text' && msg.text}
-                      {msg.type === 'image' && <div className="space-y-1"><img src={msg.text} alt="Shared" className="rounded-xl w-48 h-48 object-cover border border-black/10" /><span className="text-[10px] opacity-70">ছবি পাঠানো হয়েছে</span></div>}
+                      {msg.type === 'image' && <div className="space-y-1"><img src={msg.text} alt="Shared" className="rounded-xl w-48 h-48 object-cover border border-black/10" /><span className="text-[10px] opacity-70">ছবি পাঠানো হয়েছে</span></div>}
                       {msg.type === 'audio' && <div className="flex items-center gap-2 min-w-[150px]"><div className="w-8 h-8 rounded-full bg-black/20 flex items-center justify-center"><Mic className="w-4 h-4" /></div><div className="flex-1 h-1.5 bg-black/20 rounded-full overflow-hidden"><div className="w-1/3 h-full bg-white rounded-full"></div></div><span className="text-[11px]">0:12</span></div>}
                     </div>
                   </div>
@@ -490,17 +632,19 @@ const MessageView = ({ predefinedChat, onClosePredefined }) => {
 // ==========================================
 // 7. PROFILE VIEW
 // ==========================================
-const ProfileView = ({ posts, savedPosts, onSavePost }) => {
+const ProfileView = ({ posts, savedPosts, onSavePost, currentUser }) => {
   const [activeTab, setActiveTab] = useState('posts');
-  const myPosts = posts.filter(p => p.authorName === DB.currentUser.name);
+  const myPosts = posts.filter(p => p.authorName === currentUser?.name);
+
+  if (!currentUser) return <div className="text-center py-20 text-gray-500">দয়া করে লগইন করুন।</div>;
 
   return (
     <div className="w-full pb-20 font-sans">
       <div className="bg-white dark:bg-[#242526] rounded-3xl shadow-sm border border-gray-100 dark:border-[#333436] mb-4 overflow-hidden">
         <div className="h-24 sm:h-32 bg-gradient-to-r from-[#C2410C] to-orange-400 w-full"></div>
         <div className="px-6 pb-6 relative">
-          <div className="flex justify-between items-end -mt-10 sm:-mt-12 mb-4"><img src={DB.currentUser.avatar} className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 border-white dark:border-[#242526] bg-white" alt="" /><button className="px-4 py-1.5 border dark:border-[#4E4F50] rounded-full text-[13px] font-semibold dark:text-white">এডিট প্রোফাইল</button></div>
-          <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-1.5 dark:text-white">{DB.currentUser.name} <BadgeCheck className="w-5 h-5 text-blue-500" /></h2>
+          <div className="flex justify-between items-end -mt-10 sm:-mt-12 mb-4"><img src={currentUser.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'} className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 border-white dark:border-[#242526] bg-white object-cover" alt="" /><button className="px-4 py-1.5 border dark:border-[#4E4F50] rounded-full text-[13px] font-semibold dark:text-white">এডিট প্রোফাইল</button></div>
+          <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-1.5 dark:text-white">{currentUser.name} {currentUser.isAuthor && <BadgeCheck className="w-5 h-5 text-blue-500" />}</h2>
         </div>
       </div>
       <div className="flex border-b mb-4 bg-white dark:bg-[#242526] rounded-xl px-2 dark:border-[#333436]">
@@ -508,8 +652,8 @@ const ProfileView = ({ posts, savedPosts, onSavePost }) => {
         <button onClick={() => setActiveTab('bookshelf')} className={`flex-1 py-3.5 font-bold text-[14px] border-b-2 ${activeTab === 'bookshelf' ? 'border-[#C2410C] text-[#C2410C]' : 'border-transparent text-gray-500'}`}>বুকশেলফ ({savedPosts.length})</button>
       </div>
       <div className="space-y-4">
-        {activeTab === 'posts' && (myPosts.length > 0 ? myPosts.map(post => <PostCard key={post.id} post={post} isPremiumUser={true} />) : <p className="text-center text-gray-500 py-10">কোনো লেখা পাওয়া যায়নি।</p>)}
-        {activeTab === 'bookshelf' && (savedPosts.length > 0 ? savedPosts.map(post => <PostCard key={post.id} post={post} isPremiumUser={true} onSavePost={onSavePost} isSaved={true} />) : <div className="text-center py-10 flex flex-col items-center"><Bookmark className="w-12 h-12 text-gray-300 mb-3" /><p className="text-gray-500">কোনো পোস্ট সেভ করেননি।</p></div>)}
+        {activeTab === 'posts' && (myPosts.length > 0 ? myPosts.map(post => <PostCard key={post.id} post={post} isPremiumUser={true} currentUser={currentUser} />) : <p className="text-center text-gray-500 py-10">কোনো লেখা পাওয়া যায়নি।</p>)}
+        {activeTab === 'bookshelf' && (savedPosts.length > 0 ? savedPosts.map(post => <PostCard key={post.id} post={post} isPremiumUser={true} onSavePost={onSavePost} isSaved={true} currentUser={currentUser} />) : <div className="text-center py-10 flex flex-col items-center"><Bookmark className="w-12 h-12 text-gray-300 mb-3" /><p className="text-gray-500">কোনো পোস্ট সেভ করেননি।</p></div>)}
       </div>
     </div>
   );
@@ -520,11 +664,12 @@ const ProfileView = ({ posts, savedPosts, onSavePost }) => {
 // ==========================================
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false); 
+  const [currentUser, setCurrentUser] = useState(null); 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   
   const [currentView, setCurrentView] = useState('feed');
   const [darkMode, setDarkMode] = useState(false);
-  const [isPremiumUser, setIsPremiumUser] = useState(DB.currentUser.isPremium);
+  const [isPremiumUser, setIsPremiumUser] = useState(false);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [posts, setPosts] = useState([]);
@@ -546,6 +691,7 @@ export default function App() {
     if(!isLoggedIn) return setIsAuthModalOpen(true);
     setChatWithUser(user); setCurrentView('messages'); 
   };
+  
   const handleSavePost = (post) => {
     if(!isLoggedIn) return setIsAuthModalOpen(true);
     setSavedPosts(prev => prev.some(p => p.id === post.id) ? prev.filter(p => p.id !== post.id) : [...prev, post]);
@@ -558,7 +704,7 @@ export default function App() {
     { id: 'messages', label: 'মেসেজ', icon: MessageSquare },
     { id: 'profile', label: 'প্রোফাইল', icon: User },
   ];
-  if (isLoggedIn && DB.currentUser.role === 'admin') navItems.push({ id: 'admin', label: 'অ্যাডমিন প্যানেল', icon: ShieldCheck });
+  if (isLoggedIn && currentUser?.role === 'admin') navItems.push({ id: 'admin', label: 'অ্যাডমিন প্যানেল', icon: ShieldCheck });
 
   return (
     <div className={`min-h-screen w-full overflow-x-hidden font-sans transition-colors duration-300 ${darkMode ? 'bg-[#18191A] text-[#E4E6EB]' : 'bg-[#F3F4F6] text-[#1C1917]'}`}>
@@ -576,6 +722,11 @@ export default function App() {
               <>
                 {!isPremiumUser && <button onClick={() => setIsPaymentModalOpen(true)} className="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white px-4 py-1.5 rounded-full font-bold text-[13px] shadow-sm"><Crown className="w-4 h-4" /> Try Premium</button>}
                 <div onClick={() => {setChatWithUser(null); setCurrentView('messages');}} className="w-9 h-9 bg-gray-100 dark:bg-[#3A3B3C] rounded-full flex items-center justify-center cursor-pointer"><MessageSquare className="w-4 h-4 text-gray-700 dark:text-[#E4E6EB]" /></div>
+                
+                {/* Show user avatar in header after login */}
+                <div onClick={() => setCurrentView('profile')} className="w-9 h-9 rounded-full overflow-hidden border-2 border-transparent hover:border-[#C2410C] cursor-pointer transition-colors">
+                  <img src={currentUser?.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'} className="w-full h-full object-cover" alt="Profile" />
+                </div>
               </>
             )}
           </div>
@@ -601,19 +752,19 @@ export default function App() {
           {currentView === 'feed' && (
             <div className="w-full pb-20">
               <div className="bg-white dark:bg-[#242526] p-4 rounded-3xl shadow-sm border border-gray-100 dark:border-[#333436] mb-4 flex gap-3 items-center">
-                <img src={isLoggedIn ? DB.currentUser.avatar : 'https://cdn-icons-png.flaticon.com/512/149/149071.png'} className="w-10 h-10 rounded-full" alt="" />
+                <img src={isLoggedIn && currentUser ? currentUser.avatar : 'https://cdn-icons-png.flaticon.com/512/149/149071.png'} className="w-10 h-10 rounded-full object-cover" alt="" />
                 <div onClick={() => isLoggedIn ? setIsPostModalOpen(true) : setIsAuthModalOpen(true)} className="flex-1 bg-gray-100 dark:bg-[#3A3B3C] rounded-full px-5 py-3 text-[14px] text-gray-500 cursor-pointer">আপনার ভাবনা লিখুন...</div>
               </div>
               
               <div className="space-y-4">
                 {posts.length === 0 ? <div className="text-center py-10 text-gray-500">লোডিং হচ্ছে...</div> : posts.map((post) => (
-                  <PostCard key={post.id} post={post} isPremiumUser={isPremiumUser} onUnlockPremium={() => isLoggedIn ? setIsPaymentModalOpen(true) : setIsAuthModalOpen(true)} onMessageAuthor={handleOpenChatFromPost} onSavePost={handleSavePost} isSaved={savedPosts.some(p => p.id === post.id)} />
+                  <PostCard key={post.id} post={post} isPremiumUser={isPremiumUser} onUnlockPremium={() => isLoggedIn ? setIsPaymentModalOpen(true) : setIsAuthModalOpen(true)} onMessageAuthor={handleOpenChatFromPost} onSavePost={handleSavePost} isSaved={savedPosts.some(p => p.id === post.id)} currentUser={currentUser} />
                 ))}
               </div>
             </div>
           )}
-          {currentView === 'messages' && <MessageView predefinedChat={chatWithUser} onClosePredefined={() => setChatWithUser(null)} />}
-          {currentView === 'profile' && <ProfileView posts={posts} savedPosts={savedPosts} onSavePost={handleSavePost} />}
+          {currentView === 'messages' && <MessageView predefinedChat={chatWithUser} onClosePredefined={() => setChatWithUser(null)} currentUser={currentUser} />}
+          {currentView === 'profile' && <ProfileView posts={posts} savedPosts={savedPosts} onSavePost={handleSavePost} currentUser={currentUser} />}
           {currentView === 'admin' && <AdminDashboard posts={posts} />}
           {(currentView === 'poems' || currentView === 'library') && <div className="text-center py-20 text-gray-500 font-bold">এই পেজটি নির্মাণাধীন...</div>}
         </main>
@@ -626,8 +777,16 @@ export default function App() {
         </aside>
       </div>
 
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} onLoginSuccess={() => setIsLoggedIn(true)} />
-      <CreatePostModal isOpen={isPostModalOpen} onClose={() => setIsPostModalOpen(false)} />
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+        onLoginSuccess={(userData) => { 
+          setIsLoggedIn(true); 
+          setCurrentUser(userData); 
+          setIsPremiumUser(userData.isPremium || false); 
+        }} 
+      />
+      <CreatePostModal isOpen={isPostModalOpen} onClose={() => setIsPostModalOpen(false)} currentUser={currentUser} />
       <SubscriptionModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSubscribe={() => { setIsPremiumUser(true); setIsPaymentModalOpen(false); }} />
     </div>
   );

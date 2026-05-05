@@ -1,21 +1,17 @@
-// firebase.js ফাইল
-
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth"; // <--- এই লাইনটি যুক্ত করতে হবে
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "আপনার_এপিআই_কি",
-  authDomain: "আপনার_প্রোজেক্ট.firebaseapp.com",
-  projectId: "আপনার_প্রোজেক্ট_আইডি",
-  storageBucket: "আপনার_প্রোজেক্ট.appspot.com",
-  messagingSenderId: "...",
-  appId: "..."
+  apiKey: "AIzaSyCrIxApg5D5PzPj_vct8HRJxX2RE6D8nkI",
+  authDomain: "boi-er-jogot.firebaseapp.com",
+  projectId: "boi-er-jogot",
+  storageBucket: "boi-er-jogot.firebasestorage.app",
+  messagingSenderId: "700520728742",
+  appId: "1:700520728742:web:93aeaa181ef2a77bbe8c67",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Export db and auth
 export const db = getFirestore(app);
-export const auth = getAuth(app); // <--- এই লাইনটি অবশ্যই থাকতে হবে
+export const auth = getAuth(app);
